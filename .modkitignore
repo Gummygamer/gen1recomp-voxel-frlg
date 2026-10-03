@@ -1,0 +1,5 @@
+# Files that stay in the repo and out of the distributed package.
+# Exact relative paths, one per line -- modkit matches literally, no globs.
+
+# A driver test that requires engine modules and needs an imported cache.
+tests/voxel_frlg_driver.lua
