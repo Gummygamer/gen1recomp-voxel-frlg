@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.3
+
+- **Buildings show their picture once.** A box laid each cell's own tile on its
+  top and stood the bottom tile on end for its front, so the facade (windows,
+  the door, a Poke Center's sign) showed twice -- flat on the roof and stretched
+  up the wall -- the way trees read as cubes before they became cards. A
+  structure's picture is now folded over its box once: the bottom rows, one
+  pixel to one, are the wall, and the roof takes the rest. Columns that share a
+  front line up row for row. `Terrain.FOLD = false` brings the old faces back.
+
 ## 0.3.2
 
 - **Fewer cubes.** Narrow tall structures (a fence line, a hedge, a pole: one or

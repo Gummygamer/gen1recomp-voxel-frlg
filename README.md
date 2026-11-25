@@ -75,9 +75,12 @@ classified from the map and the art:
   instead, like the characters, leaning toward the camera, with the tileset's
   ground colour keyed away so the tree is a tree and not a green square. The
   border of an outdoor map is treated the same way.
-- **Box sides.** A box keeps the tile's picture on its top and front face; its
-  other sides are the tile's average colour, shaded, so a building is not a cube
-  with one tile repeated on every face.
+- **Box faces.** The flat game draws a building as one picture down its column,
+  roof then facade, so a box wears that picture folded once over its top and
+  front: the bottom rows stand up as the wall at one pixel to one, the roof
+  takes the rest, and no tile shows twice. The other sides are the tile's
+  average colour, shaded, so a building is not a cube with one tile repeated on
+  every face. `Terrain.FOLD = false` restores one tile per top face.
 - **Hidden characters.** Anyone standing behind a building or tree is drawn
   again as a half-strength ghost where something is in front of them.
 - **Standing on things.** A character on a solid cell (a Poke Ball on a lab

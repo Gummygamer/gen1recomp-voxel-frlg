@@ -215,6 +215,33 @@ local function runHeight(run)
   return Terrain.RUN_HEIGHT[math.min(run, #Terrain.RUN_HEIGHT)]
 end
 
+-- ------- a structure's picture, folded over its box
+--
+-- The flat game draws a building as one picture down its column: roof rows,
+-- then the facade.  Giving every cell its own tile on top AND standing the
+-- bottom tile on end for the front shows the facade twice -- once lying on the
+-- roof, once stretched up the wall -- which is how trees read as cubes before
+-- they became cards.  Instead the column's picture is wrapped ONCE over the
+-- box's top and front (see build), so every tile appears exactly once and the
+-- bottom of the picture (the door, the ground floor) is the wall.
+Terrain.FOLD = true
+local FOLD_REACH = 32        -- a run longer than this either way is not folded
+
+-- The north row and length of the structure run through (x, y), or nil.
+local function foldSpan(get, x, y)
+  local up, down = 0, 0
+  for d = 1, FOLD_REACH do
+    if not structureCell(get, x, y - d) then break end
+    up = d
+  end
+  for d = 1, FOLD_REACH do
+    if not structureCell(get, x, y + d) then break end
+    down = d
+  end
+  if up == FOLD_REACH or down == FOLD_REACH then return nil end
+  return y - up, up + down + 1
+end
+
 -- ------- the colour of a tile's sides
 --
 -- A box's east, west and north faces are seen edge-on and at an angle, where one
@@ -493,6 +520,50 @@ local function build(ctx, cx0, cy0)
     return (sx + e) / aw, (sy + e) / ah, (sx + CELL - e) / aw, (sy + CELL - e) / ah
   end
 
+  -- The same, for the rows t0..t1 (pixels from the top) of the slot only.
+  local function uvRows(ts, slot, t0, t1)
+    local img = ts.image or ts.overImage
+    local aw, ah = img:getDimensions()
+    local sx = (slot % ts.cols) * CELL
+    local sy = math.floor(slot / ts.cols) * CELL
+    local e = 0.02
+    t0, t1 = math.max(t0, e), math.min(t1, CELL - e)
+    return (sx + e) / aw, (sy + t0) / ah, (sx + CELL - e) / aw, (sy + t1) / ah
+  end
+
+  -- Lay the stretch a0..a1 of a folded column's picture (pixels down from the
+  -- run's north edge) across one face.  `at(a)` answers the height and depth of
+  -- the face's horizontal line that shows picture row a; the picture is cut at
+  -- each tile boundary so every piece samples the tile of the cell it came from
+  -- (with its over layer laid on it as a decal).
+  local function foldPieces(wx, x, yT, n, a0, a1, at, face, win, cut)
+    local a = a0
+    while a < a1 - 1e-4 do
+      local row = math.min(math.floor(a / CELL + 1e-6), n - 1)
+      local b = (row == n - 1) and a1 or math.min(a1, (row + 1) * CELL)
+      -- `at` bends at `cut`: a piece never spans it
+      if cut and a < cut - 1e-4 and b > cut then b = cut end
+      local src = get(x, yT + row)
+      if src and src.ts and (src.ts.image or src.ts.overImage) then
+        local su0, sv0, su1, sv1 = uvRows(src.ts, src.slot, a - row * CELL, b - row * CELL)
+        local ya, za = at(a)
+        local yb, zb = at(b)
+        local function corners(bk, f)
+          quad(bk, { wx, ya, za, su0, sv0 }, { wx + CELL, ya, za, su1, sv0 },
+            { wx + CELL, yb, zb, su1, sv1 }, { wx, yb, zb, su0, sv1 }, f)
+        end
+        if src.ts.image then
+          local w = (src.class == "wall") and win or 0
+          corners(bucket(src.ts, src.pair, "u"), face + w)
+        end
+        if src.hasOver and src.ts.overImage then
+          corners(bucket(src.ts, src.pair, "d"), face)
+        end
+      end
+      a = b
+    end
+  end
+
   for ly = 0, CHUNK - 1 do
     for lx = 0, CHUNK - 1 do
       local c = info[idx(x0 + lx, y0 + ly)]
@@ -509,11 +580,35 @@ local function build(ctx, cx0, cy0)
         -- pond's blue is not glass
         local win = (c.class == "wall" and not c.attached) and WINDOW or 0
 
-        -- top face: the metatile's own art, seen from above
-        quad(under,
-          { wx, h, wz, u0, v0 }, { wx + CELL, h, wz, u1, v0 },
-          { wx + CELL, h, wz + CELL, u1, v1 }, { wx, h, wz + CELL, u0, v1 },
-          FACE.top)
+        -- a box of a structure wears the structure's picture folded over its
+        -- top and front (see foldSpan); anything else its own tile
+        local yT, runN
+        if Terrain.FOLD and not c.prop and c.class ~= "void" and h > 0
+            and (c.attached or solidRec(c)) then
+          yT, runN = foldSpan(get, x0 + lx, y0 + ly)
+        end
+        -- The bottom F pixels of the picture stand up as the wall, one for
+        -- one; the top shows the rest pulled back by F, so neighbouring
+        -- columns that share a front line up row for row whatever their depth.
+        -- The first 2F of the top, at the north edge, take the first F of the
+        -- picture at half scale.  zr is a depth into the run, a a picture row.
+        local zT = yT and yT * CELL
+        local F = runN and math.min(h, runN * CELL / 2)
+        local function artAt(zr)
+          if zr < 2 * F then return zr / 2 end
+          return zr - F
+        end
+
+        if runN then
+          foldPieces(wx, x0 + lx, yT, runN, artAt(wz - zT), artAt(wz + CELL - zT),
+            function(a) return h, zT + (a < F and 2 * a or a + F) end, FACE.top, 0, F)
+        else
+          -- top face: the metatile's own art, seen from above
+          quad(under,
+            { wx, h, wz, u0, v0 }, { wx + CELL, h, wz, u1, v0 },
+            { wx + CELL, h, wz + CELL, u1, v1 }, { wx, h, wz + CELL, u0, v1 },
+            FACE.top)
+        end
 
         -- a prop's art stands as a card (see drawProps); its own cell is just
         -- ground, with the sprite's stack position remembered
@@ -534,7 +629,7 @@ local function build(ctx, cx0, cy0)
 
         -- the over layer: an overhead sheet above walkable ground, a decal
         -- laid on the top of a solid
-        if c.hasOver and c.ts.overImage and not (c.prop and key_) then
+        if c.hasOver and c.ts.overImage and not (c.prop and key_) and not runN then
           -- on a solid it lies ON the top face ("d": drawn with a depth bias so
           -- it wins without floating); over open ground it is a sheet held
           -- above ("o")
@@ -554,7 +649,19 @@ local function build(ctx, cx0, cy0)
           if nh < h then
             -- corners are given as {x, z} pairs, top then bottom
             local function pt(p, y, u, v) return { p[1], y, p[2], u, v } end
-            if face == FACE.south then
+            if face == FACE.south and runN then
+              -- the wall shows the picture from where the top left off down
+              -- to the foot; a face that drops below ground level (into
+              -- water) stretches the last rows a little rather than repeat
+              local aTop = math.min(runN * CELL, artAt(wz + CELL - zT))
+              local aBot = math.min(runN * CELL, aTop + h - math.max(nh, 0))
+              if aBot > aTop then
+                local z = wz + CELL
+                foldPieces(wx, x0 + lx, yT, runN, aTop, aBot, function(a)
+                  return h + (nh - h) * (a - aTop) / (aBot - aTop), z
+                end, face, win)
+              end
+            elseif face == FACE.south then
               quad(under,
                 pt(a, h, u0, v0), pt(b2, h, u1, v0),
                 pt(c3, nh, u1, v1), pt(d, nh, u0, v1), face + win)
